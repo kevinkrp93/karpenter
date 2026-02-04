@@ -54,6 +54,7 @@ import (
 	nodepoolregistrationhealth "sigs.k8s.io/karpenter/pkg/controllers/nodepool/registrationhealth"
 	nodepoolvalidation "sigs.k8s.io/karpenter/pkg/controllers/nodepool/validation"
 	"sigs.k8s.io/karpenter/pkg/controllers/provisioning"
+	"sigs.k8s.io/karpenter/pkg/controllers/proactivescaleup"
 	"sigs.k8s.io/karpenter/pkg/controllers/state"
 	"sigs.k8s.io/karpenter/pkg/controllers/state/informer"
 	staticdeprovisioning "sigs.k8s.io/karpenter/pkg/controllers/static/deprovisioning"
@@ -75,6 +76,13 @@ func NewControllers(
 	instanceTypeStore *nodeoverlay.InstanceTypeStore,
 ) []controller.Controller {
 	p := provisioning.NewProvisioner(kubeClient, recorder, cloudProvider, cluster, clock)
+	
+	// Configure proactive scale-up if enabled
+	if options.FromContext(ctx).FeatureGates.ProactiveScaleUp {
+		injector := proactivescaleup.NewInjector(kubeClient)
+		p.SetPodInjector(injector)
+	}
+	
 	evictionQueue := terminator.NewQueue(kubeClient, recorder)
 	disruptionQueue := disruption.NewQueue(kubeClient, recorder, cluster, clock, p)
 	npState := nodepoolhealth.NewState()
