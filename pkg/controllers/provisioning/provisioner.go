@@ -85,6 +85,7 @@ type Provisioner struct {
 	recorder       events.Recorder
 	cm             *pretty.ChangeMonitor
 	clock          clock.Clock
+	podInjector    PodInjector
 }
 
 func NewProvisioner(kubeClient client.Client, recorder events.Recorder,
@@ -100,8 +101,14 @@ func NewProvisioner(kubeClient client.Client, recorder events.Recorder,
 		recorder:       recorder,
 		cm:             pretty.NewChangeMonitor(),
 		clock:          clock,
+		podInjector:    nil, // Can be set via SetPodInjector
 	}
 	return p
+}
+
+// SetPodInjector configures a custom pod injector for proactive scale-up.
+func (p *Provisioner) SetPodInjector(injector PodInjector) {
+	p.podInjector = injector
 }
 
 func (p *Provisioner) Trigger(uid types.UID) {
@@ -194,6 +201,15 @@ func (p *Provisioner) GetPendingPods(ctx context.Context) ([]*corev1.Pod, error)
 	})
 	scheduler.IgnoredPodCount.Set(float64(len(rejectedPods)), nil)
 	p.consolidationWarnings(ctx, pods)
+	
+	// Inject additional pods if a pod injector is configured
+	if p.podInjector != nil {
+		pods, err = p.podInjector.InjectPods(ctx, pods)
+		if err != nil {
+			return nil, fmt.Errorf("injecting pods, %w", err)
+		}
+	}
+	
 	return pods, nil
 }
 
