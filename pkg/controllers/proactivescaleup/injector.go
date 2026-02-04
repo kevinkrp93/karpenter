@@ -71,7 +71,13 @@ func (i *Injector) InjectPods(ctx context.Context, realPods []*corev1.Pod) ([]*c
 	if err := i.kubeClient.List(ctx, allPods); err != nil {
 		return nil, fmt.Errorf("listing all pods, %w", err)
 	}
+	
+	// Count existing pods, excluding fake pods from previous iterations
 	for _, pod := range allPods.Items {
+		// Skip fake pods when counting existing pods
+		if pod.Labels != nil && pod.Labels[FakePodLabel] == "true" {
+			continue
+		}
 		for _, owner := range pod.OwnerReferences {
 			key := fmt.Sprintf("%s/%s/%s", pod.Namespace, owner.Kind, owner.Name)
 			existingPodsByOwner[key]++
@@ -80,14 +86,22 @@ func (i *Injector) InjectPods(ctx context.Context, realPods []*corev1.Pod) ([]*c
 
 	fakePods := []*corev1.Pod{}
 
-	// Process Deployments
+	// Process Deployments - count pods owned by their ReplicaSets
 	for _, dep := range deployments {
 		if dep.Spec.Replicas == nil {
 			continue
 		}
 		desired := int(*dep.Spec.Replicas)
-		key := fmt.Sprintf("%s/ReplicaSet/%s", dep.Namespace, dep.Name)
-		existing := existingPodsByOwner[key]
+		
+		// For Deployments, we need to count pods owned by their ReplicaSets
+		existing := 0
+		for _, rs := range replicaSets {
+			if rs.Namespace == dep.Namespace && hasOwnerReference(rs.OwnerReferences, "Deployment", dep.Name) {
+				key := fmt.Sprintf("%s/ReplicaSet/%s", rs.Namespace, rs.Name)
+				existing += existingPodsByOwner[key]
+			}
+		}
+		
 		gap := desired - existing
 
 		if gap > 0 {
@@ -299,5 +313,12 @@ func (i *Injector) generateFakePods(ctx context.Context, template *corev1.PodTem
 func hasOwnerKind(owners []metav1.OwnerReference, kind string) bool {
 	return lo.ContainsBy(owners, func(owner metav1.OwnerReference) bool {
 		return owner.Kind == kind
+	})
+}
+
+// hasOwnerReference checks if there's an owner reference with the specified kind and name
+func hasOwnerReference(owners []metav1.OwnerReference, kind, name string) bool {
+	return lo.ContainsBy(owners, func(owner metav1.OwnerReference) bool {
+		return owner.Kind == kind && owner.Name == name
 	})
 }
